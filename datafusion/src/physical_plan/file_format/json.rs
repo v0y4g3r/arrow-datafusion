@@ -225,39 +225,19 @@ mod tests {
         let runtime = Arc::new(RuntimeEnv::default());
         use arrow::datatypes::DataType;
         let path = format!("{}/1.json", TEST_DATA_BASE);
+
+        let row_schema = infer_schema(path.clone()).await?;
+        let file_schema = Arc::new(Schema::new(vec![Field::new("", DataType::Struct(row_schema.fields.clone()), true)]));
+
         let exec = NdJsonExec::new(FileScanConfig {
             object_store: Arc::new(LocalFileSystem {}),
-            file_groups: vec![vec![local_unpartitioned_file(path.clone())]],
-            file_schema: infer_schema(path).await?,
+            file_groups: vec![vec![local_unpartitioned_file(path)]],
+            file_schema,
             statistics: Statistics::default(),
             projection: None,
             limit: Some(3),
             table_partition_cols: vec![],
         });
-
-        // TODO: this is not where schema inference should be tested
-
-        let inferred_schema = exec.schema();
-        assert_eq!(inferred_schema.fields().len(), 4);
-
-        // a,b,c,d should be inferred
-        inferred_schema.field_with_name("a").unwrap();
-        inferred_schema.field_with_name("b").unwrap();
-        inferred_schema.field_with_name("c").unwrap();
-        inferred_schema.field_with_name("d").unwrap();
-
-        assert_eq!(
-            inferred_schema.field_with_name("a").unwrap().data_type(),
-            &DataType::Int64
-        );
-        assert!(matches!(
-            inferred_schema.field_with_name("b").unwrap().data_type(),
-            DataType::List(_)
-        ));
-        assert_eq!(
-            inferred_schema.field_with_name("d").unwrap().data_type(),
-            &DataType::Utf8
-        );
 
         let mut it = exec.execute(0, runtime).await?;
         let batch = it.next().await.unwrap()?;
@@ -266,11 +246,12 @@ mod tests {
         let values = batch
             .column(0)
             .as_any()
-            .downcast_ref::<arrow::array::Int64Array>()
+            .downcast_ref::<arrow::array::StructArray>()
             .unwrap();
-        assert_eq!(values.value(0), 1);
-        assert_eq!(values.value(1), -10);
-        assert_eq!(values.value(2), 2);
+        let field_a = values.values()[0].as_any().downcast_ref::<arrow::array::Int64Array>().unwrap();
+        assert_eq!(field_a.value(0), 1);
+        assert_eq!(field_a.value(1), -10);
+        assert_eq!(field_a.value(2), 2);
 
         Ok(())
     }
